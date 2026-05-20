@@ -6,6 +6,7 @@ from esphome.const import CONF_ID, ENTITY_CATEGORY_DIAGNOSTIC
 DEPENDENCIES = ["openthread"]
 AUTO_LOAD = ["text_sensor"]
 
+CONF_EVENT_BASED = "event_based"
 CONF_PARENT_EXTADDR = "parent_extaddr"
 CONF_PARENT_RLOC16 = "parent_rloc16"
 
@@ -27,6 +28,7 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(ThreadParentInfoComponent),
+            cv.Optional(CONF_EVENT_BASED, default=False): cv.boolean,
             cv.Optional(CONF_PARENT_EXTADDR): text_sensor.text_sensor_schema(
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
@@ -42,6 +44,8 @@ CONFIG_SCHEMA = cv.All(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+
+    cg.add(var.set_event_based(config[CONF_EVENT_BASED]))
 
     if parent_extaddr_config := config.get(CONF_PARENT_EXTADDR):
         sens = await text_sensor.new_text_sensor(parent_extaddr_config)
