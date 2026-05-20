@@ -1,0 +1,25 @@
+# Example usage when this component is added to:
+# https://github.com/EwoutBergsma/ESPHome-Thread-ED-Switch-Parent
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/EwoutBergsma/ESPHome-Thread-ED-Switch-Parent
+      ref: main
+    components:
+      - thread_preferred_parent
+      - thread_parent_info
+    refresh: 0s
+
+# Required elsewhere in your device YAML:
+# openthread:
+#   device_type: MTD
+#   tlv: "<PUT_YOUR_TLV_HERE>"
+
+text_sensor:
+  - platform: thread_parent_info
+    update_interval: 30s
+    parent_extaddr:
+      name: "Parent Extended Address"
+    parent_rloc16:
+      name: "Parent RLOC16"
