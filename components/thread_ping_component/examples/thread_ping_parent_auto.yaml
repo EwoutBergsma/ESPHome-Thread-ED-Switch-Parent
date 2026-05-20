@@ -1,0 +1,38 @@
+external_components:
+  - source:
+      type: git
+      url: https://github.com/EwoutBergsma/ESPHome-Thread-ED-Switch-Parent
+      ref: main
+    components:
+      - thread_ping
+    refresh: 0s
+
+thread_ping:
+  id: parent_pinger
+  auto_start: false
+  auto_interval: 60s
+  timeout: 3000ms
+
+  state:
+    name: "Thread Parent Ping State"
+  last_result:
+    name: "Thread Parent Ping Result"
+  target_extaddr:
+    name: "Thread Parent Ping Target ExtAddr"
+  target_rloc16:
+    name: "Thread Parent Ping Target RLOC16"
+  target_address:
+    name: "Thread Parent Ping Target Address"
+  sent:
+    name: "Thread Parent Ping Sent"
+  received:
+    name: "Thread Parent Ping Received"
+  loss:
+    name: "Thread Parent Ping Loss"
+  rtt:
+    name: "Thread Parent Ping RTT"
+
+button:
+  - platform: thread_ping
+    thread_ping_id: parent_pinger
+    name: "Thread Parent Ping Start/Stop"
