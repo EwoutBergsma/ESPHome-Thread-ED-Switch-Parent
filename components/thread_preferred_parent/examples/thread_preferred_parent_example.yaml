@@ -1,24 +1,5 @@
-esphome:
-  name: thread-preferred-parent-test
-  friendly_name: Thread Preferred Parent Test
-
-esp32:
-  board: esp32c6  # Change to your Thread-capable ESP32 board
-  framework:
-    type: esp-idf
-
 logger:
   level: VERY_VERBOSE  # Optional, VERY_VERBOSE should not be used production: https://esphome.io/components/logger/
-
-api:
-
-ota:
-  - platform: esphome
-
-openthread:
-  device_type: MTD  # Necessary (as FTDs do not have a parent), but BE CAREFUL, requires a full wipe of the non-violatile storage to go back to FTD: https://esphome.io/components/openthread/
-  tlv: "<PUT_YOUR_TLV HERE>"
-
 
 external_components:
   - source:
