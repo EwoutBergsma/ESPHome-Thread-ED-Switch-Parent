@@ -6,17 +6,28 @@ namespace esphome {
 namespace thread_parent_info {
 
 static const char *const TAG = "thread_parent_info";
+static constexpr uint32_t CALLBACK_STARTUP_DELAY_MS = 5000;
+static constexpr uint32_t CALLBACK_RETRY_INTERVAL_MS = 5000;
 
 void ThreadParentInfoComponent::setup() {
-  if (this->event_based_) {
-    // PollingComponent starts its poller before setup(). Stop it when the
-    // component is configured for OpenThread state-change driven updates.
-    this->stop_poller();
-    this->request_refresh_();
+  if (!this->event_based_) {
+    return;
+  }
+
+  // PollingComponent normally drives update(). In event-based mode we stop the
+  // poller and only refresh when OpenThread reports relevant state changes.
+  this->stop_poller();
+
+  // Register the OpenThread callback after the rest of ESPHome/OpenThread has
+  // had time to finish startup. This avoids publishing text-sensor state while
+  // ESPHome's own OpenThread SRP setup is still building its service records.
+  this->set_timeout("thread_parent_info_start_events", CALLBACK_STARTUP_DELAY_MS, [this]() {
+    this->callback_registration_enabled_ = true;
 #ifdef USE_OPENTHREAD
     this->register_state_changed_callback_();
 #endif
-  }
+    this->request_refresh_();
+  });
 }
 
 void ThreadParentInfoComponent::loop() {
@@ -25,16 +36,15 @@ void ThreadParentInfoComponent::loop() {
   }
 
 #ifdef USE_OPENTHREAD
-  if (!this->state_callback_registered_) {
+  if (this->callback_registration_enabled_ && !this->state_callback_registered_) {
     const uint32_t now = millis();
-    if (this->last_registration_attempt_ms_ == 0 || now - this->last_registration_attempt_ms_ >= 5000) {
+    if (this->last_registration_attempt_ms_ == 0 || now - this->last_registration_attempt_ms_ >= CALLBACK_RETRY_INTERVAL_MS) {
       this->register_state_changed_callback_();
     }
   }
 #endif
 
-  if (this->refresh_requested_) {
-    this->refresh_requested_ = false;
+  if (this->refresh_requested_.exchange(false)) {
     this->publish_parent_info_();
   }
 }
@@ -62,7 +72,7 @@ void ThreadParentInfoComponent::dump_config() {
 }
 
 void ThreadParentInfoComponent::request_refresh_() {
-  this->refresh_requested_ = true;
+  this->refresh_requested_.store(true);
 }
 
 void ThreadParentInfoComponent::publish_parent_extaddr_(const std::string &value) {
@@ -139,8 +149,10 @@ bool ThreadParentInfoComponent::register_state_changed_callback_() {
 
   otError error = otSetStateChangedCallback(instance, &ThreadParentInfoComponent::ot_state_changed_callback_, this);
   if (error == OT_ERROR_NONE || error == OT_ERROR_ALREADY) {
+    if (!this->state_callback_registered_) {
+      ESP_LOGD(TAG, "OpenThread state callback registered");
+    }
     this->state_callback_registered_ = true;
-    ESP_LOGD(TAG, "OpenThread state callback registered");
     return true;
   }
 
@@ -179,13 +191,16 @@ void ThreadParentInfoComponent::handle_ot_state_changed_(otChangedFlags flags) {
     return;
   }
 
+  // Do not publish from the OpenThread callback context. Just request a refresh;
+  // loop() will read OpenThread and publish through ESPHome's normal path.
   this->request_refresh_();
 }
 
 bool ThreadParentInfoComponent::parent_relevant_flags_(otChangedFlags flags) {
   constexpr otChangedFlags relevant_flags = OT_CHANGED_THREAD_ROLE | OT_CHANGED_THREAD_LL_ADDR | OT_CHANGED_THREAD_ML_ADDR |
                                            OT_CHANGED_THREAD_RLOC_ADDED | OT_CHANGED_THREAD_RLOC_REMOVED |
-                                           OT_CHANGED_THREAD_PARTITION_ID;
+                                           OT_CHANGED_THREAD_PARTITION_ID | OT_CHANGED_THREAD_NETIF_STATE |
+                                           OT_CHANGED_PARENT_LINK_QUALITY;
   return (flags & relevant_flags) != 0;
 }
 

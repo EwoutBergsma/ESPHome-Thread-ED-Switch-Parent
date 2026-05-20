@@ -6,6 +6,7 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/openthread/openthread.h"
 
+#include <atomic>
 #include <string>
 
 #ifdef USE_OPENTHREAD
@@ -28,14 +29,18 @@ class ThreadParentInfoComponent : public PollingComponent {
   void dump_config() override;
   bool teardown() override;
 
+  // Match ESPHome's own openthread_info sensors: run after OpenThread/network setup.
+  float get_setup_priority() const override { return setup_priority::AFTER_WIFI - 20.0f; }
+
  protected:
   text_sensor::TextSensor *parent_extaddr_sensor_{nullptr};
   text_sensor::TextSensor *parent_rloc16_sensor_{nullptr};
 
   bool event_based_{false};
   bool state_callback_registered_{false};
+  bool callback_registration_enabled_{false};
   uint32_t last_registration_attempt_ms_{0};
-  volatile bool refresh_requested_{false};
+  std::atomic<bool> refresh_requested_{false};
 
   std::string last_parent_extaddr_;
   std::string last_parent_rloc16_;
