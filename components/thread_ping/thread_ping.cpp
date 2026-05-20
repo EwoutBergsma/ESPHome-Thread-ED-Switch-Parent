@@ -14,6 +14,7 @@ static constexpr uint32_t SINGLE_PING_INTERVAL_MS = 0;
 void ThreadPingComponent::setup() {
   this->publish_state_("stopped");
   this->publish_result_("idle");
+  this->publish_control_switch_(false);
 
   if (this->auto_start_) {
     this->set_timeout("thread_ping_auto_start", AUTO_START_DELAY_MS, [this]() { this->start(); });
@@ -55,22 +56,25 @@ void ThreadPingComponent::dump_config() {
 
 void ThreadPingComponent::start() {
   if (this->run_enabled_) {
-    ESP_LOGD(TAG, "Automatic parent pinging is already running");
+    ESP_LOGI(TAG, "Automatic current-parent pinging is already running");
+    this->publish_control_switch_(true);
     return;
   }
 
-  ESP_LOGI(TAG, "Starting automatic current-parent pinging");
+  ESP_LOGI(TAG, "Starting automatic current-parent pinging; interval=%u ms timeout=%u ms", this->auto_interval_ms_, this->timeout_ms_);
   this->run_enabled_ = true;
   this->schedule_next_ping_(0);
   this->publish_state_("waiting");
   this->publish_result_("started");
+  this->publish_control_switch_(true);
 }
 
 void ThreadPingComponent::stop() {
   if (!this->run_enabled_ && !this->ping_in_flight_) {
-    ESP_LOGD(TAG, "Automatic parent pinging is already stopped");
+    ESP_LOGI(TAG, "Automatic current-parent pinging is already stopped");
     this->publish_state_("stopped");
     this->publish_result_("stopped");
+    this->publish_control_switch_(false);
     return;
   }
 
@@ -95,9 +99,11 @@ void ThreadPingComponent::stop() {
   this->statistics_ready_.store(false);
   this->publish_state_("stopped");
   this->publish_result_("stopped");
+  this->publish_control_switch_(false);
 }
 
 void ThreadPingComponent::toggle() {
+  ESP_LOGI(TAG, "Thread parent ping toggle pressed: %s", (this->run_enabled_ || this->ping_in_flight_) ? "stopping" : "starting");
   if (this->run_enabled_ || this->ping_in_flight_) {
     this->stop();
   } else {
@@ -132,13 +138,14 @@ void ThreadPingComponent::begin_parent_ping_() {
   return;
 #else
   if (this->ping_in_flight_) {
+    ESP_LOGW(TAG, "Skipping parent ping: previous ping is still active");
     this->publish_result_("busy");
     return;
   }
 
   auto lock = esphome::openthread::InstanceLock::try_acquire(10);
   if (!lock) {
-    ESP_LOGV(TAG, "OpenThread instance lock unavailable");
+    ESP_LOGW(TAG, "Skipping parent ping: OpenThread instance lock unavailable");
     this->publish_result_("OpenThread lock unavailable");
     if (this->run_enabled_) {
       this->publish_state_("waiting");
@@ -149,6 +156,7 @@ void ThreadPingComponent::begin_parent_ping_() {
 
   otInstance *instance = lock->get_instance();
   if (instance == nullptr) {
+    ESP_LOGW(TAG, "Skipping parent ping: OpenThread instance unavailable");
     this->publish_result_("OpenThread instance unavailable");
     if (this->run_enabled_) {
       this->publish_state_("waiting");
@@ -159,7 +167,7 @@ void ThreadPingComponent::begin_parent_ping_() {
 
   ParentSnapshot parent{};
   if (!this->read_current_parent_(instance, &parent)) {
-    ESP_LOGD(TAG, "No current Thread parent to ping");
+    ESP_LOGI(TAG, "Skipping parent ping: no current Thread parent (device is not currently a child)");
     this->clear_target_();
     this->publish_counts_(0, 0, 0);
     this->publish_loss_(0, 0);
@@ -195,6 +203,8 @@ void ThreadPingComponent::begin_parent_ping_() {
   }
 
   this->target_parent_ = parent;
+  this->current_ping_started_ms_ = millis();
+  this->ping_sequence_++;
   this->ping_in_flight_ = true;
   this->expecting_statistics_ = true;
   this->statistics_ready_.store(false);
@@ -205,8 +215,8 @@ void ThreadPingComponent::begin_parent_ping_() {
   this->publish_target_(parent);
   this->publish_state_("pinging");
   this->publish_result_("pinging");
-  ESP_LOGI(TAG, "Pinging current Thread parent ExtAddr %s RLOC16 %s at %s (single packet)", parent.extaddr.c_str(),
-           parent.rloc16_string.c_str(), parent.address_string.c_str());
+  ESP_LOGI(TAG, "Parent ping #%u start: ExtAddr=%s RLOC16=%s address=%s timeout=%u ms", this->ping_sequence_,
+           parent.extaddr.c_str(), parent.rloc16_string.c_str(), parent.address_string.c_str(), this->timeout_ms_);
 #endif
 }
 
@@ -229,11 +239,13 @@ void ThreadPingComponent::process_statistics_() {
 
 #ifdef USE_OPENTHREAD
   ParentSnapshot current{};
+  bool parent_known_after_ping = false;
   bool parent_changed = true;
   auto lock = esphome::openthread::InstanceLock::try_acquire(10);
   if (lock) {
     otInstance *instance = lock->get_instance();
     if (instance != nullptr && this->read_current_parent_(instance, &current)) {
+      parent_known_after_ping = true;
       parent_changed = !this->parent_matches_(this->target_parent_, current);
     }
   }
@@ -250,9 +262,31 @@ void ThreadPingComponent::process_statistics_() {
     result = "timeout";
   }
 
-  ESP_LOGI(TAG, "Parent ping result: %s; sent=%u received=%u loss=%.0f%% rtt=%u ms target=%s", result.c_str(), sent,
-           received, sent > 0 ? (100.0f * static_cast<float>(sent - received) / static_cast<float>(sent)) : 0.0f, rtt,
-           this->target_parent_.address_string.c_str());
+  const uint32_t elapsed_ms = millis() - this->current_ping_started_ms_;
+  const float loss_pct = sent > 0 ? (100.0f * static_cast<float>(sent - received) / static_cast<float>(sent)) : 0.0f;
+
+#ifdef USE_OPENTHREAD
+  if (result == "parent changed during ping") {
+    if (parent_known_after_ping) {
+      ESP_LOGW(TAG,
+               "Parent ping #%u result: parent changed during ping; start ExtAddr=%s RLOC16=%s, current ExtAddr=%s RLOC16=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms elapsed=%u ms",
+               this->ping_sequence_, this->target_parent_.extaddr.c_str(), this->target_parent_.rloc16_string.c_str(),
+               current.extaddr.c_str(), current.rloc16_string.c_str(), sent, received, loss_pct, rtt, elapsed_ms);
+    } else {
+      ESP_LOGW(TAG,
+               "Parent ping #%u result: parent unavailable after ping; start ExtAddr=%s RLOC16=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms elapsed=%u ms",
+               this->ping_sequence_, this->target_parent_.extaddr.c_str(), this->target_parent_.rloc16_string.c_str(),
+               sent, received, loss_pct, rtt, elapsed_ms);
+    }
+  } else
+#endif
+  {
+    ESP_LOGI(TAG,
+             "Parent ping #%u result: %s; target ExtAddr=%s RLOC16=%s address=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms elapsed=%u ms",
+             this->ping_sequence_, result.c_str(), this->target_parent_.extaddr.c_str(),
+             this->target_parent_.rloc16_string.c_str(), this->target_parent_.address_string.c_str(), sent, received,
+             loss_pct, rtt, elapsed_ms);
+  }
 
   this->publish_result_(result);
 
@@ -322,6 +356,12 @@ void ThreadPingComponent::clear_target_() {
   this->publish_target_(empty);
 }
 
+void ThreadPingComponent::publish_control_switch_(bool state) {
+  if (this->control_switch_ != nullptr) {
+    this->control_switch_->publish_state(state);
+  }
+}
+
 #ifdef USE_OPENTHREAD
 bool ThreadPingComponent::read_current_parent_(otInstance *instance, ParentSnapshot *parent) {
   if (instance == nullptr || parent == nullptr) {
@@ -366,7 +406,7 @@ void ThreadPingComponent::statistics_callback_(const otPingSenderStatistics *sta
 
 void ThreadPingComponent::handle_reply_(const otPingSenderReply *reply) {
   this->cb_last_rtt_ms_ = reply->mRoundTripTime;
-  ESP_LOGV(TAG, "Parent ping reply: seq=%u rtt=%u ms size=%u", reply->mSequenceNumber, reply->mRoundTripTime, reply->mSize);
+  ESP_LOGI(TAG, "Parent ping #%u reply: icmp_seq=%u rtt=%u ms size=%u target=%s", this->ping_sequence_, reply->mSequenceNumber, reply->mRoundTripTime, reply->mSize, this->target_parent_.address_string.c_str());
 }
 
 void ThreadPingComponent::handle_statistics_(const otPingSenderStatistics *statistics) {
@@ -381,6 +421,8 @@ void ThreadPingComponent::handle_statistics_(const otPingSenderStatistics *stati
     // in case a platform delivers statistics without an earlier reply callback.
     this->cb_last_rtt_ms_ = static_cast<uint16_t>(statistics->mTotalRoundTripTime / statistics->mReceivedCount);
   }
+  ESP_LOGD(TAG, "Parent ping #%u statistics callback: sent=%u received=%u total_rtt=%u ms", this->ping_sequence_,
+           statistics->mSentCount, statistics->mReceivedCount, statistics->mTotalRoundTripTime);
   this->statistics_ready_.store(true);
 }
 

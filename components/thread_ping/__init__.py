@@ -9,7 +9,7 @@ from esphome.const import (
 )
 
 DEPENDENCIES = ["openthread"]
-AUTO_LOAD = ["sensor", "text_sensor", "button"]
+AUTO_LOAD = ["sensor", "text_sensor", "button", "switch"]
 
 CONF_AUTO_INTERVAL = "auto_interval"
 CONF_AUTO_START = "auto_start"

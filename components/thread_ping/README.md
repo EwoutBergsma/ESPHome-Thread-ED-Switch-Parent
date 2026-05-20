@@ -26,6 +26,8 @@ The ping statistics are still published, but they are marked as belonging to the
 
 ## Example
 
+Minimal setup with only a Home Assistant switch and log output:
+
 ```yaml
 external_components:
   - source:
@@ -42,35 +44,33 @@ thread_ping:
   auto_interval: 60s
   timeout: 3000ms
 
+switch:
+  - platform: thread_ping
+    thread_ping_id: parent_pinger
+    name: "Thread Parent Ping"
+```
+
+Turning the switch on starts automatic pinging. Turning it off stops automatic pinging.
+
+With `auto_interval: 60s`, the component sends one ping, waits for the result or timeout, then waits 60 seconds before sending the next one.
+
+Optional diagnostic entities can be added under `thread_ping:` when wanted:
+
+```yaml
+thread_ping:
+  id: parent_pinger
+  auto_interval: 60s
+  timeout: 3000ms
+
   state:
     name: "Thread Parent Ping State"
   last_result:
     name: "Thread Parent Ping Result"
-  target_extaddr:
-    name: "Thread Parent Ping Target ExtAddr"
   target_rloc16:
     name: "Thread Parent Ping Target RLOC16"
-  target_address:
-    name: "Thread Parent Ping Target Address"
-
-  sent:
-    name: "Thread Parent Ping Sent"
-  received:
-    name: "Thread Parent Ping Received"
-  loss:
-    name: "Thread Parent Ping Loss"
   rtt:
     name: "Thread Parent Ping RTT"
-
-button:
-  - platform: thread_ping
-    thread_ping_id: parent_pinger
-    name: "Thread Parent Ping Start/Stop"
 ```
-
-Pressing the button toggles automatic pinging on and off.
-
-With `auto_interval: 60s`, the component sends one ping, waits for the result or timeout, then waits 60 seconds before sending the next one.
 
 ## One-shot ping
 
@@ -103,6 +103,8 @@ button:
 | `loss` | Optional | Sensor showing packet loss percentage, normally `0` or `100`. |
 | `rtt` | Optional | Sensor showing round-trip time in ms. `0` when no reply was received. |
 
+All diagnostic sensors are optional. If you only want the switch and log output, omit the `state`, `last_result`, `target_*`, `sent`, `received`, `loss`, and `rtt` blocks.
+
 ## Possible results
 
 - `started` — automatic pinging was started.
@@ -122,5 +124,29 @@ button:
 - Each attempt sends exactly one ping packet.
 - It does not add a parent stability delay.
 - It does not influence parent selection.
-- It stops an in-flight ping if the start/stop button is pressed while pinging.
+- It stops an in-flight ping if the switch is turned off while pinging.
 - The parent target is snapshotted at ping start, so results remain interpretable during parent switches.
+
+## Logs
+
+At `logger.level: INFO`, the component logs start, reply, result, and skipped-ping cases with the `thread_ping` tag.
+
+Example successful ping:
+
+```text
+[I][thread_ping:213]: Parent ping #4 start: ExtAddr=cec5115b300418f0 RLOC16=b000 address=fd9a:b302:f776:1fa7:0:ff:fe00:b000 timeout=3000 ms
+[I][thread_ping:398]: Parent ping #4 reply: icmp_seq=1 rtt=42 ms size=8 target=fd9a:b302:f776:1fa7:0:ff:fe00:b000
+[I][thread_ping:280]: Parent ping #4 result: success; target ExtAddr=cec5115b300418f0 RLOC16=b000 address=fd9a:b302:f776:1fa7:0:ff:fe00:b000; sent=1 received=1 loss=0% rtt=42 ms elapsed=85 ms
+```
+
+Example parent-change case:
+
+```text
+[W][thread_ping:267]: Parent ping #5 result: parent changed during ping; start ExtAddr=cec5115b300418f0 RLOC16=b000, current ExtAddr=ee252133216fe86b RLOC16=f000; sent=1 received=1 loss=0% rtt=55 ms elapsed=170 ms
+```
+
+Lines like this are ESPHome API keepalive pings, not Thread ICMPv6 pings from this component:
+
+```text
+[VV][api.service:020]: on_ping_request: {}
+```

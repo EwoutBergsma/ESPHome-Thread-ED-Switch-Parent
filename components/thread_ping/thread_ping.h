@@ -4,6 +4,7 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "esphome/components/button/button.h"
+#include "esphome/components/switch/switch.h"
 #include "esphome/components/openthread/openthread.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
@@ -22,6 +23,8 @@
 
 namespace esphome {
 namespace thread_ping {
+
+class ThreadPingControlSwitch;
 
 class ThreadPingComponent : public Component {
  public:
@@ -44,6 +47,7 @@ class ThreadPingComponent : public Component {
   void set_received_sensor(sensor::Sensor *sensor) { this->received_sensor_ = sensor; }
   void set_loss_sensor(sensor::Sensor *sensor) { this->loss_sensor_ = sensor; }
   void set_rtt_sensor(sensor::Sensor *sensor) { this->rtt_sensor_ = sensor; }
+  void set_control_switch(ThreadPingControlSwitch *control_switch) { this->control_switch_ = control_switch; }
 
   void start();
   void stop();
@@ -75,11 +79,15 @@ class ThreadPingComponent : public Component {
   sensor::Sensor *loss_sensor_{nullptr};
   sensor::Sensor *rtt_sensor_{nullptr};
 
+  ThreadPingControlSwitch *control_switch_{nullptr};
+
   bool auto_start_{false};
   bool run_enabled_{false};
   bool ping_in_flight_{false};
   bool expecting_statistics_{false};
   uint32_t next_ping_due_ms_{0};
+  uint32_t current_ping_started_ms_{0};
+  uint32_t ping_sequence_{0};
 
   uint32_t auto_interval_ms_{60000};
   uint16_t timeout_ms_{3000};
@@ -100,6 +108,7 @@ class ThreadPingComponent : public Component {
   void publish_counts_(uint16_t sent, uint16_t received, uint16_t rtt_ms);
   void publish_loss_(uint16_t sent, uint16_t received);
   void clear_target_();
+  void publish_control_switch_(bool state);
 
 #ifdef USE_OPENTHREAD
   bool read_current_parent_(otInstance *instance, ParentSnapshot *parent);
@@ -113,6 +122,27 @@ class ThreadPingComponent : public Component {
   static std::string extaddr_to_string_(const otExtAddress &address);
   static std::string rloc16_to_string_(uint16_t rloc16);
 #endif
+};
+
+class ThreadPingControlSwitch : public switch_::Switch, public Component {
+ public:
+  void set_parent(ThreadPingComponent *parent) { this->parent_ = parent; }
+
+ protected:
+  void write_state(bool state) override {
+    if (this->parent_ == nullptr) {
+      this->publish_state(false);
+      return;
+    }
+
+    if (state) {
+      this->parent_->start();
+    } else {
+      this->parent_->stop();
+    }
+  }
+
+  ThreadPingComponent *parent_{nullptr};
 };
 
 class ThreadPingToggleButton : public button::Button, public Component {
