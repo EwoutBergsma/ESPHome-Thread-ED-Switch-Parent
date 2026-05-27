@@ -71,3 +71,4 @@ The OpenThread CLI `ping` line is also patched to include RSS:
 - The patch script is idempotent and creates `.thread-ping-rss.bak` backups before modifying OpenThread files.
 - The RSS value is the average RSS attached to the received OpenThread message, which is the same source used by OpenThread's MeshForwarder log line (`rss:-50.0`).
 - If RSS is unavailable, the component publishes `NaN` to the `rss` sensor and logs `rss=unavailable`.
+- Do a clean ESPHome build after replacing the component folder so the vendored OpenThread files are patched and rebuilt consistently.

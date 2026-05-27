@@ -77,6 +77,13 @@ def framework_espidf_roots_from_env() -> list[Path]:
         if value:
             roots.append(Path(str(value)) / "framework-espidf")
 
+    try:
+        packages_dir = env.subst("$PROJECT_PACKAGES_DIR")
+    except Exception:
+        packages_dir = ""
+    if packages_dir and "$" not in packages_dir:
+        roots.append(Path(packages_dir) / "framework-espidf")
+
     return roots
 
 
@@ -168,7 +175,7 @@ def patch_ping_sender_cpp(root: Path) -> str:
     return write_if_changed(path, text, new_text)
 
 
-def ensure_radio_include(path: Path, text: str) -> str:
+def ensure_radio_include(text: str) -> str:
     if "#include <openthread/platform/radio.h>" in text:
         return text
     if "#include <openthread/ping_sender.h>" in text:
@@ -185,10 +192,10 @@ def patch_cli_ping_file(path: Path) -> str:
         return "not-found"
 
     text = read_text(path)
-    if "rss=unavailable" in text or "mRss" in text and "time=%ums rss=%d" in text:
+    if "rss=unavailable" in text or ("mRss" in text and "time=%ums rss=%d" in text):
         return "already"
 
-    text_with_include = ensure_radio_include(path, text)
+    text_with_include = ensure_radio_include(text)
 
     replacement = """if (aReply->mRss == OT_RADIO_RSSI_INVALID)
     {

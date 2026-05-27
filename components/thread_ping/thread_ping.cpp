@@ -191,21 +191,9 @@ void ThreadPingComponent::begin_parent_ping_() {
   config.mStatisticsCallback = &ThreadPingComponent::statistics_callback_;
   config.mCallbackContext = this;
 
-  otError error = otPingSenderPing(instance, &config);
-  if (error != OT_ERROR_NONE) {
-    ESP_LOGW(TAG, "Failed to start parent ping to %s: OpenThread error %d", parent.address_string.c_str(), static_cast<int>(error));
-    this->publish_target_(parent);
-    this->publish_counts_(0, 0, 0);
-    this->publish_loss_(0, 0);
-    this->publish_rss_(false, 0);
-    this->publish_result_(error == OT_ERROR_BUSY ? "busy" : "failed to start");
-    if (this->run_enabled_) {
-      this->publish_state_("waiting");
-      this->schedule_next_ping_(this->auto_interval_ms_);
-    }
-    return;
-  }
-
+  // Prepare component-owned callback state before calling OpenThread. The
+  // OpenThread ping sender calls SendPing() before returning, so callbacks should
+  // never have to observe stale target/sequence/RSS state.
   this->target_parent_ = parent;
   this->current_ping_started_ms_ = millis();
   this->ping_sequence_++;
@@ -217,6 +205,26 @@ void ThreadPingComponent::begin_parent_ping_() {
   this->cb_last_rtt_ms_ = 0;
   this->cb_last_rss_valid_ = false;
   this->cb_last_rss_dbm_ = 0;
+
+  otError error = otPingSenderPing(instance, &config);
+  if (error != OT_ERROR_NONE) {
+    this->ping_in_flight_ = false;
+    this->expecting_statistics_ = false;
+    this->statistics_ready_.store(false);
+
+    ESP_LOGW(TAG, "Failed to start parent ping #%u to %s: OpenThread error %d", this->ping_sequence_,
+             parent.address_string.c_str(), static_cast<int>(error));
+    this->publish_target_(parent);
+    this->publish_counts_(0, 0, 0);
+    this->publish_loss_(0, 0);
+    this->publish_rss_(false, 0);
+    this->publish_result_(error == OT_ERROR_BUSY ? "busy" : "failed to start");
+    if (this->run_enabled_) {
+      this->publish_state_("waiting");
+      this->schedule_next_ping_(this->auto_interval_ms_);
+    }
+    return;
+  }
 
   this->publish_target_(parent);
   this->publish_state_("pinging");
