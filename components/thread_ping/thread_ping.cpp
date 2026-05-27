@@ -1,5 +1,6 @@
 #include "thread_ping.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -52,6 +53,7 @@ void ThreadPingComponent::dump_config() {
   LOG_SENSOR("  ", "Received", this->received_sensor_);
   LOG_SENSOR("  ", "Loss", this->loss_sensor_);
   LOG_SENSOR("  ", "RTT", this->rtt_sensor_);
+  LOG_SENSOR("  ", "RSS", this->rss_sensor_);
 }
 
 void ThreadPingComponent::start() {
@@ -171,6 +173,7 @@ void ThreadPingComponent::begin_parent_ping_() {
     this->clear_target_();
     this->publish_counts_(0, 0, 0);
     this->publish_loss_(0, 0);
+    this->publish_rss_(false, 0);
     this->publish_result_("no parent");
     if (this->run_enabled_) {
       this->publish_state_("waiting");
@@ -194,6 +197,7 @@ void ThreadPingComponent::begin_parent_ping_() {
     this->publish_target_(parent);
     this->publish_counts_(0, 0, 0);
     this->publish_loss_(0, 0);
+    this->publish_rss_(false, 0);
     this->publish_result_(error == OT_ERROR_BUSY ? "busy" : "failed to start");
     if (this->run_enabled_) {
       this->publish_state_("waiting");
@@ -211,6 +215,8 @@ void ThreadPingComponent::begin_parent_ping_() {
   this->cb_sent_count_ = 0;
   this->cb_received_count_ = 0;
   this->cb_last_rtt_ms_ = 0;
+  this->cb_last_rss_valid_ = false;
+  this->cb_last_rss_dbm_ = 0;
 
   this->publish_target_(parent);
   this->publish_state_("pinging");
@@ -231,9 +237,13 @@ void ThreadPingComponent::process_statistics_() {
   const uint16_t sent = this->cb_sent_count_;
   const uint16_t received = this->cb_received_count_;
   const uint16_t rtt = received > 0 ? this->cb_last_rtt_ms_ : 0;
+  const bool rss_valid = received > 0 && this->cb_last_rss_valid_;
+  const int8_t rss_dbm = this->cb_last_rss_dbm_;
+  const std::string rss_text = this->rss_to_string_(rss_valid, rss_dbm);
 
   this->publish_counts_(sent, received, rtt);
   this->publish_loss_(sent, received);
+  this->publish_rss_(rss_valid, rss_dbm);
 
   std::string result;
 
@@ -269,23 +279,23 @@ void ThreadPingComponent::process_statistics_() {
   if (result == "parent changed during ping") {
     if (parent_known_after_ping) {
       ESP_LOGW(TAG,
-               "Parent ping #%u result: parent changed during ping; start ExtAddr=%s RLOC16=%s, current ExtAddr=%s RLOC16=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms elapsed=%u ms",
+               "Parent ping #%u result: parent changed during ping; start ExtAddr=%s RLOC16=%s, current ExtAddr=%s RLOC16=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms rss=%s elapsed=%u ms",
                this->ping_sequence_, this->target_parent_.extaddr.c_str(), this->target_parent_.rloc16_string.c_str(),
-               current.extaddr.c_str(), current.rloc16_string.c_str(), sent, received, loss_pct, rtt, elapsed_ms);
+               current.extaddr.c_str(), current.rloc16_string.c_str(), sent, received, loss_pct, rtt, rss_text.c_str(), elapsed_ms);
     } else {
       ESP_LOGW(TAG,
-               "Parent ping #%u result: parent unavailable after ping; start ExtAddr=%s RLOC16=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms elapsed=%u ms",
+               "Parent ping #%u result: parent unavailable after ping; start ExtAddr=%s RLOC16=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms rss=%s elapsed=%u ms",
                this->ping_sequence_, this->target_parent_.extaddr.c_str(), this->target_parent_.rloc16_string.c_str(),
-               sent, received, loss_pct, rtt, elapsed_ms);
+               sent, received, loss_pct, rtt, rss_text.c_str(), elapsed_ms);
     }
   } else
 #endif
   {
     ESP_LOGI(TAG,
-             "Parent ping #%u result: %s; target ExtAddr=%s RLOC16=%s address=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms elapsed=%u ms",
+             "Parent ping #%u result: %s; target ExtAddr=%s RLOC16=%s address=%s; sent=%u received=%u loss=%.0f%% rtt=%u ms rss=%s elapsed=%u ms",
              this->ping_sequence_, result.c_str(), this->target_parent_.extaddr.c_str(),
              this->target_parent_.rloc16_string.c_str(), this->target_parent_.address_string.c_str(), sent, received,
-             loss_pct, rtt, elapsed_ms);
+             loss_pct, rtt, rss_text.c_str(), elapsed_ms);
   }
 
   this->publish_result_(result);
@@ -348,6 +358,12 @@ void ThreadPingComponent::publish_loss_(uint16_t sent, uint16_t received) {
   this->loss_sensor_->publish_state(loss);
 }
 
+void ThreadPingComponent::publish_rss_(bool valid, int8_t rss_dbm) {
+  if (this->rss_sensor_ != nullptr) {
+    this->rss_sensor_->publish_state(valid ? static_cast<float>(rss_dbm) : NAN);
+  }
+}
+
 void ThreadPingComponent::clear_target_() {
   ParentSnapshot empty{};
   empty.extaddr = "no parent";
@@ -360,6 +376,16 @@ void ThreadPingComponent::publish_control_switch_(bool state) {
   if (this->control_switch_ != nullptr) {
     this->control_switch_->publish_state(state);
   }
+}
+
+std::string ThreadPingComponent::rss_to_string_(bool valid, int8_t rss_dbm) {
+  if (!valid) {
+    return "unavailable";
+  }
+
+  char buf[16];
+  std::snprintf(buf, sizeof(buf), "%d dBm", static_cast<int>(rss_dbm));
+  return std::string(buf);
 }
 
 #ifdef USE_OPENTHREAD
@@ -406,7 +432,18 @@ void ThreadPingComponent::statistics_callback_(const otPingSenderStatistics *sta
 
 void ThreadPingComponent::handle_reply_(const otPingSenderReply *reply) {
   this->cb_last_rtt_ms_ = reply->mRoundTripTime;
-  ESP_LOGI(TAG, "Parent ping #%u reply: icmp_seq=%u rtt=%u ms size=%u target=%s", this->ping_sequence_, reply->mSequenceNumber, reply->mRoundTripTime, reply->mSize, this->target_parent_.address_string.c_str());
+
+  if (reply->mRss == OT_RADIO_RSSI_INVALID) {
+    this->cb_last_rss_valid_ = false;
+  } else {
+    this->cb_last_rss_valid_ = true;
+    this->cb_last_rss_dbm_ = reply->mRss;
+  }
+
+  const std::string rss_text = this->rss_to_string_(this->cb_last_rss_valid_, this->cb_last_rss_dbm_);
+  ESP_LOGI(TAG, "Parent ping #%u reply: icmp_seq=%u rtt=%u ms size=%u rss=%s target=%s", this->ping_sequence_,
+           reply->mSequenceNumber, reply->mRoundTripTime, reply->mSize, rss_text.c_str(),
+           this->target_parent_.address_string.c_str());
 }
 
 void ThreadPingComponent::handle_statistics_(const otPingSenderStatistics *statistics) {

@@ -18,6 +18,7 @@
 #include <openthread/instance.h>
 #include <openthread/ip6.h>
 #include <openthread/ping_sender.h>
+#include <openthread/platform/radio.h>
 #include <openthread/thread.h>
 #endif
 
@@ -47,6 +48,7 @@ class ThreadPingComponent : public Component {
   void set_received_sensor(sensor::Sensor *sensor) { this->received_sensor_ = sensor; }
   void set_loss_sensor(sensor::Sensor *sensor) { this->loss_sensor_ = sensor; }
   void set_rtt_sensor(sensor::Sensor *sensor) { this->rtt_sensor_ = sensor; }
+  void set_rss_sensor(sensor::Sensor *sensor) { this->rss_sensor_ = sensor; }
   void set_control_switch(ThreadPingControlSwitch *control_switch) { this->control_switch_ = control_switch; }
 
   void start();
@@ -78,6 +80,7 @@ class ThreadPingComponent : public Component {
   sensor::Sensor *received_sensor_{nullptr};
   sensor::Sensor *loss_sensor_{nullptr};
   sensor::Sensor *rtt_sensor_{nullptr};
+  sensor::Sensor *rss_sensor_{nullptr};
 
   ThreadPingControlSwitch *control_switch_{nullptr};
 
@@ -98,6 +101,8 @@ class ThreadPingComponent : public Component {
   uint16_t cb_sent_count_{0};
   uint16_t cb_received_count_{0};
   uint16_t cb_last_rtt_ms_{0};
+  bool cb_last_rss_valid_{false};
+  int8_t cb_last_rss_dbm_{0};
 
   void schedule_next_ping_(uint32_t delay_ms);
   void begin_parent_ping_();
@@ -107,8 +112,10 @@ class ThreadPingComponent : public Component {
   void publish_target_(const ParentSnapshot &parent);
   void publish_counts_(uint16_t sent, uint16_t received, uint16_t rtt_ms);
   void publish_loss_(uint16_t sent, uint16_t received);
+  void publish_rss_(bool valid, int8_t rss_dbm);
   void clear_target_();
   void publish_control_switch_(bool state);
+  static std::string rss_to_string_(bool valid, int8_t rss_dbm);
 
 #ifdef USE_OPENTHREAD
   bool read_current_parent_(otInstance *instance, ParentSnapshot *parent);

@@ -1,3 +1,5 @@
+import os
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor, text_sensor
@@ -8,8 +10,15 @@ from esphome.const import (
     UNIT_PERCENT,
 )
 
+try:
+    from esphome.const import UNIT_DECIBEL_MILLIWATT
+except ImportError:
+    UNIT_DECIBEL_MILLIWATT = "dBm"
+
 DEPENDENCIES = ["openthread"]
 AUTO_LOAD = ["sensor", "text_sensor", "button", "switch"]
+
+SCRIPT_PATH = os.path.join(os.path.dirname(__file__), "apply-openthread-ping-rss-patch.py")
 
 CONF_AUTO_INTERVAL = "auto_interval"
 CONF_AUTO_START = "auto_start"
@@ -25,6 +34,7 @@ CONF_SENT = "sent"
 CONF_RECEIVED = "received"
 CONF_LOSS = "loss"
 CONF_RTT = "rtt"
+CONF_RSS = "rss"
 
 thread_ping_ns = cg.esphome_ns.namespace("thread_ping")
 ThreadPingComponent = thread_ping_ns.class_("ThreadPingComponent", cg.Component)
@@ -76,11 +86,20 @@ CONFIG_SCHEMA = cv.Schema(
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        cv.Optional(CONF_RSS): sensor.sensor_schema(
+            unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
 
 async def to_code(config):
+    # Patch ESP-IDF's vendored OpenThread before compilation so otPingSenderReply
+    # exposes mRss and the built-in OpenThread CLI ping output can print RSS.
+    cg.add_platformio_option("extra_scripts", [f"pre:{SCRIPT_PATH}"])
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
@@ -123,3 +142,7 @@ async def to_code(config):
     if rtt_config := config.get(CONF_RTT):
         sens = await sensor.new_sensor(rtt_config)
         cg.add(var.set_rtt_sensor(sens))
+
+    if rss_config := config.get(CONF_RSS):
+        sens = await sensor.new_sensor(rss_config)
+        cg.add(var.set_rss_sensor(sens))
