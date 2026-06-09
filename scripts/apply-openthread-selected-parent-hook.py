@@ -313,8 +313,13 @@ def patch_selected_parent_destination(root: Path, *, dry_run: bool = False) -> s
     v15 patched from AppendVersionTlv() to the next SendTo() anchor. On ESP-IDF
     5.5.4 that can be too broad if the file has already been partially patched,
     and it can leave SendParentRequest() without its exit block / namespace tail.
+
     This version replaces only the compact destination branch immediately before
     the final message->SendTo(destination) call.
+
+    Important FTD fix:
+    Inside Mle::Attacher, OpenThread's locator requires typed Get<Mle>(), not
+    bare Get(). Bare Get() compiles out in MTD but breaks FTD builds.
     """
     path = root / "thread/mle.cpp"
     text = normalize_newlines(path.read_text())
@@ -331,11 +336,25 @@ def patch_selected_parent_destination(root: Path, *, dry_run: bool = False) -> s
     body = text[open_brace:close_brace]
 
     if "THREAD_PREFERRED_PARENT_DISCOVERY_UNICAST_HOOK" in body:
+        # Repair older generated code that used bare Get() in the FTD branch.
+        repaired_body = body.replace(
+            "destination.SetToLinkLocalAddress(Get().mParent.GetExtAddress());",
+            "destination.SetToLinkLocalAddress(Get<Mle>().mParent.GetExtAddress());",
+        ).replace(
+            "destination.SetToLinkLocalAddress(Get().mParentSearch.GetSelectedParent().GetExtAddress());",
+            "destination.SetToLinkLocalAddress(Get<Mle>().mParentSearch.GetSelectedParent().GetExtAddress());",
+        )
+
+        if repaired_body != body:
+            new_text = text[:open_brace] + repaired_body + text[close_brace:]
+            return write_if_changed(path, text, new_text, dry_run=dry_run)
+
         # Treat as already applied only if the function still has its normal exit
         # block and final SendTo(). This avoids accepting a previously-truncated
         # v15 patch as valid.
         if "SuccessOrExit(error = message->SendTo(destination));" in body and "\nexit:" in body:
             return "already"
+
         print("[thread_preferred_parent][detail] existing SendParentRequest unicast hook looks incomplete")
         return "missing"
 
@@ -353,7 +372,7 @@ def patch_selected_parent_destination(root: Path, *, dry_run: bool = False) -> s
         TxMessage *messageToCurParent = static_cast<TxMessage *>(message->Clone());
         VerifyOrExit(messageToCurParent != nullptr, error = kErrorNoBufs);
 
-        destination.SetToLinkLocalAddress(Get().mParent.GetExtAddress());
+        destination.SetToLinkLocalAddress(Get<Mle>().mParent.GetExtAddress());
         error = messageToCurParent->SendTo(destination);
         if (error != kErrorNone)
         {
@@ -362,7 +381,7 @@ def patch_selected_parent_destination(root: Path, *, dry_run: bool = False) -> s
         }
         Log(kMessageSend, kTypeParentRequestToRouters, destination);
 
-        destination.SetToLinkLocalAddress(Get().mParentSearch.GetSelectedParent().GetExtAddress());
+        destination.SetToLinkLocalAddress(Get<Mle>().mParentSearch.GetSelectedParent().GetExtAddress());
 #else
         // THREAD_PREFERRED_PARENT_SELECTED_PARENT_HOOK
         // MTD builds do not have ParentSearch, but selected-parent attach still
@@ -391,7 +410,14 @@ def patch_selected_parent_destination(root: Path, *, dry_run: bool = False) -> s
         r"(?=\n\s*SuccessOrExit\s*\(\s*error\s*=\s*message->SendTo\s*\(\s*destination\s*\)\s*\)\s*;)"
     )
 
-    new_body, count = re.subn(pattern, "\n" + replacement.rstrip(), body, count=1, flags=re.DOTALL | re.MULTILINE)
+    new_body, count = re.subn(
+        pattern,
+        "\n" + replacement.rstrip(),
+        body,
+        count=1,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+
     if count == 0:
         # Fallback: ESP-IDF/OpenThread variants where the selected-router branch
         # has already been edited but still uses the same final multicast block.
@@ -400,7 +426,13 @@ def patch_selected_parent_destination(root: Path, *, dry_run: bool = False) -> s
             r"\s*else\s*\n\s*\{\s*\n\s*destination\.SetToLinkLocalAllRoutersMulticast\s*\(\s*\)\s*;\s*\n\s*\}\s*"
             r"(?=\n\s*SuccessOrExit\s*\(\s*error\s*=\s*message->SendTo\s*\(\s*destination\s*\)\s*\)\s*;)"
         )
-        new_body, count = re.subn(pattern, "\n" + replacement.rstrip(), body, count=1, flags=re.DOTALL | re.MULTILINE)
+        new_body, count = re.subn(
+            pattern,
+            "\n" + replacement.rstrip(),
+            body,
+            count=1,
+            flags=re.DOTALL | re.MULTILINE,
+        )
 
     if count == 0:
         print("[thread_preferred_parent][detail] no safe destination-selection block match in SendParentRequest")
