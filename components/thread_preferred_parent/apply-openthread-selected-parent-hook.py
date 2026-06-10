@@ -353,7 +353,7 @@ def patch_selected_parent_destination(root: Path, *, dry_run: bool = False) -> s
         TxMessage *messageToCurParent = static_cast<TxMessage *>(message->Clone());
         VerifyOrExit(messageToCurParent != nullptr, error = kErrorNoBufs);
 
-        destination.SetToLinkLocalAddress(Get().mParent.GetExtAddress());
+        destination.SetToLinkLocalAddress(Get<Mle>().mParent.GetExtAddress());
         error = messageToCurParent->SendTo(destination);
         if (error != kErrorNone)
         {
@@ -362,7 +362,7 @@ def patch_selected_parent_destination(root: Path, *, dry_run: bool = False) -> s
         }
         Log(kMessageSend, kTypeParentRequestToRouters, destination);
 
-        destination.SetToLinkLocalAddress(Get().mParentSearch.GetSelectedParent().GetExtAddress());
+        destination.SetToLinkLocalAddress(Get<Mle>().mParentSearch.GetSelectedParent().GetExtAddress());
 #else
         // THREAD_PREFERRED_PARENT_SELECTED_PARENT_HOOK
         // MTD builds do not have ParentSearch, but selected-parent attach still
