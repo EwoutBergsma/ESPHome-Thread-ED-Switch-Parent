@@ -109,7 +109,7 @@ void ThreadParentInfoComponent::publish_parent_info_() {
     return;
   }
 
-  otInstance *instance = lock.get_instance();
+  otInstance *instance = lock->get_instance();
   if (instance == nullptr) {
     this->publish_both_("OpenThread instance unavailable");
     return;
@@ -141,7 +141,7 @@ bool ThreadParentInfoComponent::register_state_changed_callback_() {
     return false;
   }
 
-  otInstance *instance = lock.get_instance();
+  otInstance *instance = lock->get_instance();
   if (instance == nullptr) {
     ESP_LOGV(TAG, "OpenThread instance unavailable while registering state callback");
     return false;
@@ -167,7 +167,7 @@ void ThreadParentInfoComponent::remove_state_changed_callback_() {
 
   auto lock = esphome::openthread::InstanceLock::try_acquire(10);
   if (lock) {
-    otInstance *instance = lock.get_instance();
+    otInstance *instance = lock->get_instance();
     if (instance != nullptr) {
       otRemoveStateChangeCallback(instance, &ThreadParentInfoComponent::ot_state_changed_callback_, this);
     }

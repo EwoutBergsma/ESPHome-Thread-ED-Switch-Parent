@@ -88,7 +88,7 @@ void ThreadPingComponent::stop() {
   if (this->ping_in_flight_) {
     auto lock = esphome::openthread::InstanceLock::try_acquire(10);
     if (lock) {
-      otInstance *instance = lock.get_instance();
+      otInstance *instance = lock->get_instance();
       if (instance != nullptr) {
         otPingSenderStop(instance);
       }
@@ -156,7 +156,7 @@ void ThreadPingComponent::begin_parent_ping_() {
     return;
   }
 
-  otInstance *instance = lock.get_instance();
+  otInstance *instance = lock->get_instance();
   if (instance == nullptr) {
     ESP_LOGW(TAG, "Skipping parent ping: OpenThread instance unavailable");
     this->publish_result_("OpenThread instance unavailable");
@@ -261,7 +261,7 @@ void ThreadPingComponent::process_statistics_() {
   bool parent_changed = true;
   auto lock = esphome::openthread::InstanceLock::try_acquire(10);
   if (lock) {
-    otInstance *instance = lock.get_instance();
+    otInstance *instance = lock->get_instance();
     if (instance != nullptr && this->read_current_parent_(instance, &current)) {
       parent_known_after_ping = true;
       parent_changed = !this->parent_matches_(this->target_parent_, current);

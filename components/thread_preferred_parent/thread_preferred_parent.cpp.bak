@@ -233,10 +233,10 @@ void ThreadPreferredParentComponent::clear_target() {
   this->set_status_(Status::IDLE);
 
   auto lock = esphome::openthread::InstanceLock::try_acquire(0);
-  if (lock) {
+  if (lock.has_value()) {
     // Best-effort cleanup: remove any preferred-parent hint that an older or
     // alternate patch may have left inside the OpenThread instance.
-    this->clear_preferred_parent_in_ot_(lock.get_instance());
+    this->clear_preferred_parent_in_ot_(lock->get_instance());
   }
 }
 
@@ -255,11 +255,11 @@ void ThreadPreferredParentComponent::loop() {
   // OpenThread access is serialized through InstanceLock. If we cannot acquire
   // it right now, simply try again on the next loop without disturbing state.
   auto lock = esphome::openthread::InstanceLock::try_acquire(0);
-  if (!lock) {
+  if (!lock.has_value()) {
     return;
   }
 
-  otInstance *instance = lock.get_instance();
+  otInstance *instance = lock->get_instance();
 
   // Success is defined by the device's actual current parent, not merely by
   // whether an attach request was accepted. This keeps the component grounded
